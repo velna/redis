@@ -286,6 +286,9 @@ void freeZsetObject(robj *o) {
 void freeHashObject(robj *o) {
     switch (o->encoding) {
     case REDIS_ENCODING_HT:
+        if (((dict*) o->ptr)->privdata){
+            zfree(((dict*) o->ptr)->privdata);
+        }
         dictRelease((dict*) o->ptr);
         break;
     case REDIS_ENCODING_ZIPLIST:
@@ -737,3 +740,62 @@ void objectCommand(redisClient *c) {
     }
 }
 
+
+size_t objectMemUsage(const robj *o){
+    size_t len = 0;
+    switch(o->type){
+    case REDIS_STRING:
+        if(o->encoding == REDIS_ENCODING_RAW || o->encoding == REDIS_ENCODING_EMBSTR){
+            len = sdslen(o->ptr);
+        } else if(o->encoding == REDIS_ENCODING_INT){
+            len = sizeof(long);
+        } else {
+            redisPanic("Unknown string encoding");
+        }
+        break;
+    case REDIS_LIST:
+        break;
+    case REDIS_SET:
+        if(o->encoding == REDIS_ENCODING_HT){
+            memUsage *mu = ((dict*)o->ptr)->privdata;
+            if(mu){
+                len = mu->keyMem + mu->valMem;
+            }
+        } else if (o->encoding == REDIS_ENCODING_INTSET){
+            intset *is = o->ptr;
+            switch(is->encoding){
+            case INTSET_ENC_INT64:
+                len = is->length * sizeof(int64_t);
+                break;
+            case INTSET_ENC_INT32:
+                len = is->length * sizeof(int32_t);
+                break;
+            default:
+                len = is->length * sizeof(int16_t);
+                break;
+            }
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+        break;
+    case REDIS_ZSET:
+        break;
+    case REDIS_HASH:
+        if (o->encoding == REDIS_ENCODING_ZIPLIST){
+            len = ziplistBlobLen(o->ptr) - 13 - ziplistLen(o->ptr);
+        } else if (o->encoding == REDIS_ENCODING_HT){
+            memUsage *mu = ((dict*)o->ptr)->privdata;
+            if(mu){
+                len = mu->keyMem + mu->valMem;
+            }
+        } else {
+            redisPanic("Unknown hash encoding");
+        }
+        break;
+    default:
+        redisPanic("Unknown object type");
+        break;
+    }
+    //redisLog(REDIS_NOTICE, "Type: %u, Encoding: %u, Len: %lu", o->type, o->encoding, len);
+    return len;
+}

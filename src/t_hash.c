@@ -419,7 +419,10 @@ void hashTypeConvertZiplist(robj *o, int enc) {
         int ret;
 
         hi = hashTypeInitIterator(o);
-        dict = dictCreate(&hashDictType, NULL);
+        memUsage *mu = zmalloc(sizeof(*mu));
+        mu->keyMem = 0;
+        mu->valMem = 0;
+        dict = dictCreate(&hashDictType, mu);
 
         while (hashTypeNext(hi) != REDIS_ERR) {
             robj *field, *value;

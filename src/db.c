@@ -336,6 +336,19 @@ void randomkeyCommand(redisClient *c) {
     decrRefCount(key);
 }
 
+void keymemCommand(redisClient *c) {
+    robj *o;
+    int j;
+    long long n = 0;
+
+    for(j=1; j<c->argc; j++){
+        if((o = lookupKeyRead(c->db, c->argv[j]))){
+            n += objectMemUsage(o);
+        }
+    }
+    addReplyLongLong(c, n);
+}
+
 void keysCommand(redisClient *c) {
     dictIterator *di;
     dictEntry *de;

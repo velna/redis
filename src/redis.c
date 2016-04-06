@@ -221,6 +221,7 @@ struct redisCommand redisCommandTable[] = {
     {"pexpire",pexpireCommand,3,"wF",0,NULL,1,1,1,0,0},
     {"pexpireat",pexpireatCommand,3,"wF",0,NULL,1,1,1,0,0},
     {"keys",keysCommand,2,"rS",0,NULL,0,0,0,0,0},
+    {"keymem",keymemCommand,-2,"rF",0,NULL,1,1,1,0,0},
     {"scan",scanCommand,-2,"rR",0,NULL,0,0,0,0,0},
     {"dbsize",dbsizeCommand,1,"rF",0,NULL,0,0,0,0,0},
     {"auth",authCommand,2,"rsltF",0,NULL,0,0,0,0,0},
@@ -411,6 +412,54 @@ void exitFromChild(int retcode) {
  * keys and redis objects as values (objects can hold SDS strings,
  * lists, sets). */
 
+void *dictMUSdsKeyDup(void *privdata, const void *key)
+{
+    ((memUsage *)privdata)->keyMem += sdslen((sds)key);
+    //redisLog(REDIS_NOTICE, "SdsK+\t%lu\t=%lu", sdslen((sds)key), ((memUsage *)privdata)->keyMem);
+    return (void*)key;
+}
+
+void *dictMURedisObjKeyDup(void *privdata, const void *obj)
+{
+    size_t len = objectMemUsage(obj);
+    ((memUsage *)privdata)->keyMem += len;
+    //redisLog(REDIS_NOTICE, "ObjK+\t%lu\t=%lu", len, ((memUsage *)privdata)->keyMem);
+    return (void*)obj;
+}
+
+void *dictMURedisObjValDup(void *privdata, const void *obj)
+{
+    size_t len = objectMemUsage(obj);
+    ((memUsage *)privdata)->valMem += len;
+    //redisLog(REDIS_NOTICE, "ObjV+\t%lu\t=%lu", len, ((memUsage *)privdata)->valMem);
+    return (void*)obj;
+}
+
+void dictMUObjectKeyDestructor(void *privdata, void *val)
+{
+    if (val == NULL) return; /* Values of swapped out keys as set to NULL */
+    size_t len = objectMemUsage(val);
+    ((memUsage *)privdata)->keyMem -= len;
+    //redisLog(REDIS_NOTICE, "ObjK-\t%lu\t=%lu", len, ((memUsage *)privdata)->keyMem);
+    decrRefCount(val);
+}
+
+void dictMUObjectValDestructor(void *privdata, void *val)
+{
+    if (val == NULL) return; /* Values of swapped out keys as set to NULL */
+    size_t len = objectMemUsage(val);
+    ((memUsage *)privdata)->valMem -= len;
+    //redisLog(REDIS_NOTICE, "ObjV-\t%lu\t=%lu", len, ((memUsage *)privdata)->valMem);
+    decrRefCount(val);
+}
+
+void dictMUSdsDestructor(void *privdata, void *key)
+{
+    ((memUsage *)privdata)->keyMem -= sdslen((sds)key);
+    //redisLog(REDIS_NOTICE, "SdsK-\t%lu\t=%lu", sdslen((sds)key), ((memUsage *)privdata)->keyMem);
+    sdsfree(key);
+}
+
 void dictVanillaFree(void *privdata, void *val)
 {
     DICT_NOTUSED(privdata);
@@ -544,11 +593,11 @@ dictType zsetDictType = {
 /* Db->dict, keys are sds strings, vals are Redis objects. */
 dictType dbDictType = {
     dictSdsHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
+    dictMUSdsKeyDup,            /* key dup */
+    dictMURedisObjValDup,       /* val dup */
     dictSdsKeyCompare,          /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    dictRedisObjectDestructor   /* val destructor */
+    dictMUSdsDestructor,        /* key destructor */
+    dictMUObjectValDestructor /* val destructor */
 };
 
 /* server.lua_scripts sha (as sds string) -> scripts (as robj) cache. */
@@ -584,11 +633,11 @@ dictType commandTableDictType = {
 /* Hash type hash table (note that small hashes are represented with ziplists) */
 dictType hashDictType = {
     dictEncObjHash,             /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
+    dictMURedisObjKeyDup,                       /* key dup */
+    dictMURedisObjValDup,                       /* val dup */
     dictEncObjKeyCompare,       /* key compare */
-    dictRedisObjectDestructor,  /* key destructor */
-    dictRedisObjectDestructor   /* val destructor */
+    dictMUObjectKeyDestructor,  /* key destructor */
+    dictMUObjectValDestructor   /* val destructor */
 };
 
 /* Keylist hash table type has unencoded redis objects as keys and
@@ -1812,7 +1861,10 @@ void initServer(void) {
 
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
-        server.db[j].dict = dictCreate(&dbDictType,NULL);
+        memUsage *mu = zmalloc(sizeof(*mu));
+        mu->keyMem = 0;
+        mu->valMem = 0;
+        server.db[j].dict = dictCreate(&dbDictType,mu);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].ready_keys = dictCreate(&setDictType,NULL);

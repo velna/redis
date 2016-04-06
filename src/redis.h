@@ -418,6 +418,11 @@ typedef long long mstime_t; /* millisecond time type. */
  * Data types
  *----------------------------------------------------------------------------*/
 
+typedef struct memUsage {
+    size_t keyMem;
+    size_t valMem;
+} memUsage;
+
 /* A redis object, that is a type able to hold a string / list / set */
 
 /* The actual Redis Object */
@@ -1138,6 +1143,7 @@ robj *createStringObject(char *ptr, size_t len);
 robj *createRawStringObject(char *ptr, size_t len);
 robj *createEmbeddedStringObject(char *ptr, size_t len);
 robj *dupStringObject(robj *o);
+size_t objectMemUsage(const robj *o);
 int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
 robj *tryObjectEncoding(robj *o);
 robj *getDecodedObject(robj *o);
@@ -1420,6 +1426,7 @@ void incrbyfloatCommand(redisClient *c);
 void selectCommand(redisClient *c);
 void randomkeyCommand(redisClient *c);
 void keysCommand(redisClient *c);
+void keymemCommand(redisClient *c);
 void scanCommand(redisClient *c);
 void dbsizeCommand(redisClient *c);
 void lastsaveCommand(redisClient *c);
